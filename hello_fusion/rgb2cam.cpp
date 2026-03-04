@@ -152,7 +152,7 @@ int main(int argc, char** argv)
 {
     // Camera indices can vary. Typical: 0 and 1.
     int camAIndex = 0;
-    int camBIndex = 1;
+    int camBIndex = 2;
     if (argc >= 3)
     {
         camAIndex = atoi(argv[1]);

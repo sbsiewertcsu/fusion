@@ -12,13 +12,16 @@ CFILES= capture.cpp rgb2cam.cpp
 SRCS= ${HFILES} ${CFILES}
 OBJS= ${CFILES:.cpp=.o}
 
-all:	capture rgb2cam
+all:	capture rgb2cam rgb2cap
 
 clean:
 	-rm -f *.o *.d
-	-rm -f capture rgb2cam
+	-rm -f capture rgb2cam rgb2cap
 
 capture: capture.o
+	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
+
+rgb2cap: rgb2cap.o
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
 
 rgb2cam: rgb2cam.o
