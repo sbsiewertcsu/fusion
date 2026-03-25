@@ -1,11 +1,11 @@
-INCLUDE_DIRS =  -I/usr/local/opencv/include
+INCLUDE_DIRS =  -I/usr/include/opencv4
 LIB_DIRS = 
 CC=g++
 
 CDEFS=
 CFLAGS= -O0 -g $(INCLUDE_DIRS) $(CDEFS)
 LIBS= -lrt
-CPPLIBS= -L/usr/local/opencv/lib -lopencv_core -lopencv_flann -lopencv_video
+CPPLIBS= -L/usr/lib -lopencv_core -lopencv_flann -lopencv_video -lrt
 
 HFILES= 
 CFILES= 
@@ -24,13 +24,13 @@ distclean:
 	-rm -f *.o *.d
 
 capture_stereo: capture_stereo.o
-	$(CC) $(LDFLAGS) $(CFLAGS) $(INCLUDE_DIRS) -o $@ $@.o `pkg-config --libs opencv` $(CPPLIBS)
+	$(CC) $(LDFLAGS) $(CFLAGS) $(INCLUDE_DIRS) -o $@ $@.o `pkg-config --libs opencv4` $(CPPLIBS)
 
 capture: capture.o
-	$(CC) $(LDFLAGS) $(CFLAGS) $(INCLUDE_DIRS) -o $@ $@.o `pkg-config --libs opencv` $(CPPLIBS)
+	$(CC) $(LDFLAGS) $(CFLAGS) $(INCLUDE_DIRS) -o $@ $@.o `pkg-config --libs opencv4` $(CPPLIBS)
 
 stereo_match: stereo_match.o
-	$(CC) $(LDFLAGS) $(CFLAGS) $(INCLUDE_DIRS) -o $@ $@.o `pkg-config --libs opencv` $(CPPLIBS)
+	$(CC) $(LDFLAGS) $(CFLAGS) $(INCLUDE_DIRS) -o $@ $@.o `pkg-config --libs opencv4` $(CPPLIBS)
 
 depend:
 
