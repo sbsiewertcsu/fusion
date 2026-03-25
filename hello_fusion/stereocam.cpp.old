@@ -1,4 +1,4 @@
-// stereocam.cpp
+// stereocam_depth_debug.cpp
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d.hpp>
 #include <iostream>
@@ -146,7 +146,7 @@ static bool makeDebugKeypointMatches(const Mat& rectLGray,
 int main(int argc, char** argv)
 {
     // Usage:
-    //   ./stereocam calib.yml [leftIndex] [rightIndex]
+    //   ./stereocam_depth calib.yml [leftIndex] [rightIndex]
     if (argc < 2)
     {
         cerr << "Usage: " << argv[0] << " calib.yml [camLeftIndex] [camRightIndex]\n";
@@ -215,14 +215,8 @@ int main(int argc, char** argv)
         StereoSGBM::MODE_SGBM_3WAY
     );
 
-    namedWindow("Rectified (L|R)", WINDOW_AUTOSIZE);
-    namedWindow("Disparity", WINDOW_AUTOSIZE);
-    //namedWindow("Rectified (L|R)", WINDOW_NORMAL);
-    //namedWindow("Disparity", WINDOW_NORMAL);
-
-    //resizeWindow("Rectified (L|R)", 640, 480);
-    //resizeWindow("Disparity", 640, 480);
-
+    namedWindow("Rectified (L|R)", WINDOW_NORMAL);
+    namedWindow("Disparity", WINDOW_NORMAL);
     setMouseCallback("Disparity", onMouseDisparity);
 
     bool showDebugMatches = false;
@@ -271,17 +265,13 @@ int main(int argc, char** argv)
 
         if (showDebugMatches)
         {
-            namedWindow("Debug Keypoint Matches", WINDOW_AUTOSIZE);
-            //namedWindow("Debug Keypoint Matches", WINDOW_NORMAL);
-            //resizeWindow("Debug Keypoint Matches", 640, 480);
-
             if (makeDebugKeypointMatches(grayL, grayR, debugMatches))
                 imshow("Debug Keypoint Matches", debugMatches);
             else
             {
-                Mat msg(480, 640, CV_8UC3, Scalar::all(0));
+                Mat msg(240, 700, CV_8UC3, Scalar::all(0));
                 putText(msg, "Not enough valid ORB stereo matches",
-                        Point(20, 240), FONT_HERSHEY_SIMPLEX, 0.8,
+                        Point(20, 120), FONT_HERSHEY_SIMPLEX, 0.8,
                         Scalar(0, 0, 255), 2, LINE_AA);
                 imshow("Debug Keypoint Matches", msg);
             }

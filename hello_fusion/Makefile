@@ -7,16 +7,16 @@ CFLAGS= -O0 -g $(INCLUDE_DIRS) $(CDEFS)
 LIBS= -L/usr/lib -lopencv_core -lopencv_flann -lopencv_video -lrt
 
 HFILES= 
-CFILES= capture.cpp rgb2cam.cpp rgb2cap.cpp rgb2simpstitch rgb2stitch stereocam.cpp
+CFILES= capture.cpp rgb2cam.cpp rgb2siftcam.cpp rgb2cap.cpp rgb2simpstitch.cpp rgb2stitch.cpp stereocal.cpp stereocam.cpp
 
 SRCS= ${HFILES} ${CFILES}
 OBJS= ${CFILES:.cpp=.o}
 
-all:	capture rgb2cam rgb2cap rgb2simpstitch rgb2stitch stereocam
+all:	capture rgb2cam rgb2siftcam rgb2cap rgb2simpstitch rgb2stitch stereocal stereocal stereocam
 
 clean:
 	-rm -f *.o *.d
-	-rm -f capture rgb2cam rgb2cap rgb2simpstitch rgb2stitch stereocam
+	-rm -f capture rgb2cam rgb2siftcam rgb2cap rgb2simpstitch rgb2stitch stereocal stereocam
 
 capture: capture.o
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
@@ -27,10 +27,16 @@ rgb2cap: rgb2cap.o
 rgb2cam: rgb2cam.o
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
 
+rgb2siftcam: rgb2siftcam.o
+	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
+
 rgb2simpstitch: rgb2simpstitch.o
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
 
 rgb2stitch: rgb2stitch.o
+	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
+
+stereocal: stereocal.o
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
 
 stereocam: stereocam.o
