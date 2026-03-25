@@ -4,48 +4,30 @@
  *                            experiment and learn Stereo vision concepts pairing with
  *                            "Learning OpenCV" by Gary Bradski and Adrian Kaehler
  *
- *  For more advanced stereo vision processing for camera calibration, disparity, and
- *  point-cloud generation from a left and right image, see samples directory where you
- *  downloaded and built Opencv latest: e.g. opencv-2.4.7/samples/cpp/stero_match.cpp
- *
- *  ADDED:
- *
- *  1) 4th argument of "t" for transform [Canny and Hough Linear] or "d" for disparity
- *
- *  2) 4th argument is "h" for Hough Linear transform and otherwise "c" for Canny
- *
- *  NOTE: Uncompressed YUV at 640x480 for 2 cameras is likely to exceed
- *        your USB 2.0 bandwidth available.  The calculation is:
- *        2 cameras x 640 x 480 x 2 bytes_per_pixel x 30 Hz = 36000 KBytes/sec
- *        
- *        About 370 Mbps (assuming 8b/10b link encoding), and USB 2.0 is 480
- *        Mbps at line rate with no overhead.
- *
- *        So, for full performance with 2 cameras, drop resolution down to 320x240.
- *
- *        With a single camera I had no problem running 1280x720 (720p). 
- *
- *        I tested with really old Logitech C200 and newer C270 webcams, both are well
- *        supported and tested with the Linux UVC driver - http://www.ideasonboard.org/uvc
- *
- *        Use with a native Linux installation and any UVC driver camera.  You can
- *        verify that UVC is loaded with "lsmod | grep uvc" after you plug in your
- *        camera (modprobe if you need to) and you can verify a USB camera's link wiht
- *        "lsusb" and "dmesg" after plugging it in.
- *        
+ *  Updated for OpenCV 4.11+:
+ *  - Replaced removed C API (CvCapture/IplImage/cvQueryFrame/cvShowImage/cvSaveImage)
+ *    with VideoCapture/Mat/imshow/imwrite
+ *  - Replaced removed opencv2/contrib/contrib.hpp and StereoVar usage
+ *    with StereoSGBM
+ *  - Replaced CV_WINDOW_AUTOSIZE with WINDOW_AUTOSIZE
+ *  - Replaced CV_AA with LINE_AA
  *
  */
+
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <iostream>
+#include <string>
+#include <vector>
 
-#include "opencv2/core/core.hpp"
-#include "opencv2/highgui/highgui.hpp"
-
-#include "opencv2/calib3d/calib3d.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/contrib/contrib.hpp"
+#include <opencv2/core.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/videoio.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 using namespace cv;
 using namespace std;
@@ -62,270 +44,297 @@ using namespace std;
 
 #define ESC_KEY (27)
 
-char snapshotname[80]="snapshot_xxx.jpg";
-
-int main( int argc, char** argv )
+static string makeSnapshotName(const string& prefix, double timestamp_ms)
 {
-    double prev_frame_time, prev_frame_time_l, prev_frame_time_r;
-    double curr_frame_time, curr_frame_time_l, curr_frame_time_r;
-    struct timespec frame_time, frame_time_l, frame_time_r;
-    CvCapture *capture;
-    CvCapture *capture_l;
-    CvCapture *capture_r;
-    IplImage *frame, *frame_l, *frame_r;
-    int dev=0, devl=0, devr=1;
+    char buf[128];
+    snprintf(buf, sizeof(buf), "snapshot_%s_%8.4lf.jpg", prefix.c_str(), timestamp_ms);
+    return string(buf);
+}
 
-    int computeDisparity=0;
-    int applyCannyTransform=0;
-    int applyHoughTransform=0;
+static double now_ms(timespec& ts)
+{
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return ((double)ts.tv_sec * 1000.0) + ((double)ts.tv_nsec / 1000000.0);
+}
+
+int main(int argc, char** argv)
+{
+    double prev_frame_time = 0.0, prev_frame_time_l = 0.0, prev_frame_time_r = 0.0;
+    double curr_frame_time = 0.0, curr_frame_time_l = 0.0, curr_frame_time_r = 0.0;
+    struct timespec frame_time{}, frame_time_l{}, frame_time_r{};
+
+    VideoCapture capture;
+    VideoCapture capture_l;
+    VideoCapture capture_r;
+
+    Mat frame, frame_l, frame_r;
+    int dev = 0, devl = 0, devr = 1;
+
+    int computeDisparity = 0;
+    int applyCannyTransform = 0;
+    int applyHoughTransform = 0;
 
     Mat gray_l, canny_frame_l;
     vector<Vec4i> lines_l;
     Mat gray_r, canny_frame_r;
     vector<Vec4i> lines_r;
 
+    Mat disp, disp8;
 
-    Mat disp;
+    // Modern replacement for StereoVar
+    int minDisparity = 0;
+    int numDisparities = 64;   // must be divisible by 16
+    int blockSize = 5;         // must be odd
+    Ptr<StereoSGBM> stereo = StereoSGBM::create(
+        minDisparity,
+        numDisparities,
+        blockSize,
+        8 * 3 * blockSize * blockSize,
+        32 * 3 * blockSize * blockSize,
+        1,   // disp12MaxDiff
+        63,  // preFilterCap
+        10,  // uniquenessRatio
+        100, // speckleWindowSize
+        32,  // speckleRange
+        StereoSGBM::MODE_SGBM
+    );
 
-    StereoVar myStereoVar;
-
-
-    if(argc == 1)
+    if (argc == 1)
     {
-        printf("Will open DEFAULT video device video0\n");
-        capture = cvCreateCameraCapture(0);
-        cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, HRES_COLS);
-        cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, VRES_ROWS);
+	printf("Usage: capture_stereo <cam dev 0> <cam dev 2> [d=disparity, h=hough, c=canny]\n");
+        //printf("Will open DEFAULT video device video0\n");
+        //capture.open(0, CAP_ANY);
+        //capture.set(CAP_PROP_FRAME_WIDTH, HRES_COLS);
+        //capture.set(CAP_PROP_FRAME_HEIGHT, VRES_ROWS);
     }
 
-    if(argc == 2)
+    if (argc == 2)
     {
         printf("argv[1]=%s\n", argv[1]);
         sscanf(argv[1], "%d", &dev);
         printf("Will open SINGLE video device %d\n", dev);
-        capture = cvCreateCameraCapture(dev);
-        cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, HRES_COLS);
-        cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, VRES_ROWS);
+        capture.open(dev, CAP_ANY);
+        capture.set(CAP_PROP_FRAME_WIDTH, HRES_COLS);
+        capture.set(CAP_PROP_FRAME_HEIGHT, VRES_ROWS);
     }
 
-    if(argc >= 3)
+    if (argc >= 3)
     {
-
         printf("argv[1]=%s, argv[2]=%s\n", argv[1], argv[2]);
         sscanf(argv[1], "%d", &devl);
         sscanf(argv[2], "%d", &devr);
         printf("Will open DUAL video devices %d and %d\n", devl, devr);
-        capture_l = cvCreateCameraCapture(devl);
-        capture_r = cvCreateCameraCapture(devr);
-        cvSetCaptureProperty(capture_l, CV_CAP_PROP_FRAME_WIDTH, HRES_COLS);
-        cvSetCaptureProperty(capture_l, CV_CAP_PROP_FRAME_HEIGHT, VRES_ROWS);
-        cvSetCaptureProperty(capture_r, CV_CAP_PROP_FRAME_WIDTH, HRES_COLS);
-        cvSetCaptureProperty(capture_r, CV_CAP_PROP_FRAME_HEIGHT, VRES_ROWS);
 
-        if(argc == 4)
+        capture_l.open(devl, CAP_ANY);
+        capture_r.open(devr, CAP_ANY);
+
+        capture_l.set(CAP_PROP_FRAME_WIDTH, HRES_COLS);
+        capture_l.set(CAP_PROP_FRAME_HEIGHT, VRES_ROWS);
+        capture_r.set(CAP_PROP_FRAME_WIDTH, HRES_COLS);
+        capture_r.set(CAP_PROP_FRAME_HEIGHT, VRES_ROWS);
+
+        if (!capture_l.isOpened() || !capture_r.isOpened())
         {
-
-            if(strncmp(argv[3],"d",1) == 0)
-            {
-                computeDisparity=1;
-                // set parameters for disparity
-                myStereoVar.levels = 3;
-                myStereoVar.pyrScale = 0.5;
-                myStereoVar.nIt = 25;
-                myStereoVar.minDisp = -16;
-                myStereoVar.maxDisp = 0;
-                myStereoVar.poly_n = 3;
-                myStereoVar.poly_sigma = 0.0;
-                myStereoVar.fi = 15.0f;
-                myStereoVar.lambda = 0.03f;
-                myStereoVar.penalization = myStereoVar.PENALIZATION_TICHONOV;
-                myStereoVar.cycle = myStereoVar.CYCLE_V;
-                myStereoVar.flags = myStereoVar.USE_SMART_ID 
-                                  | myStereoVar.USE_AUTO_PARAMS 
-                                  | myStereoVar.USE_INITIAL_DISPARITY 
-                                  | myStereoVar.USE_MEDIAN_FILTERING ;
-
-                cvNamedWindow("Capture LEFT", CV_WINDOW_AUTOSIZE);
-                cvNamedWindow("Capture RIGHT", CV_WINDOW_AUTOSIZE);
-                namedWindow("Capture DISPARITY", CV_WINDOW_AUTOSIZE);
-            }
-            else if(strncmp(argv[3],"h",1) == 0)
-            {
-                applyHoughTransform=1;
-            }
-            else
-            {
-                applyCannyTransform=1;
-            }
+            cerr << "ERROR: Could not open stereo camera devices " << devl << " and " << devr << endl;
+            return -1;
         }
 
-        while(1)
+        if (argc == 4)
         {
-            frame_l=cvQueryFrame(capture_l);
-            frame_r=cvQueryFrame(capture_r);
-
-            if(!frame_l) break;
-            if(!frame_r) break;
-  
-            if(applyCannyTransform || applyHoughTransform)
+            if (strncmp(argv[3], "d", 1) == 0)
             {
-                //Mat mat_frame_l(frame_l);
-                Mat mat_frame_l(cvarrToMat(frame_l));
-                Canny(mat_frame_l, canny_frame_l, 50, 200, 3);
-                //Mat mat_frame_r(frame_r);
-                Mat mat_frame_r(cvarrToMat(frame_r));
-                Canny(mat_frame_r, canny_frame_r, 50, 200, 3);
+                computeDisparity = 1;
+                namedWindow("Capture LEFT", WINDOW_AUTOSIZE);
+                namedWindow("Capture RIGHT", WINDOW_AUTOSIZE);
+                namedWindow("Capture DISPARITY", WINDOW_AUTOSIZE);
+            }
+            else if (strncmp(argv[3], "h", 1) == 0)
+            {
+                applyHoughTransform = 1;
+                namedWindow("Capture LEFT", WINDOW_AUTOSIZE);
+                namedWindow("Capture RIGHT", WINDOW_AUTOSIZE);
+            }
+            else
+            {
+                applyCannyTransform = 1;
+                namedWindow("Capture LEFT", WINDOW_AUTOSIZE);
+                namedWindow("Capture RIGHT", WINDOW_AUTOSIZE);
+            }
+        }
+        else
+        {
+            namedWindow("Capture LEFT", WINDOW_AUTOSIZE);
+            namedWindow("Capture RIGHT", WINDOW_AUTOSIZE);
+        }
 
-                if(applyHoughTransform)
+        while (1)
+        {
+            // Better for stereo timing than read(): grab both first, then retrieve both.
+            if (!capture_l.grab() || !capture_r.grab())
+                break;
+            if (!capture_l.retrieve(frame_l) || !capture_r.retrieve(frame_r))
+                break;
+            if (frame_l.empty() || frame_r.empty())
+                break;
+
+            Mat display_l = frame_l.clone();
+            Mat display_r = frame_r.clone();
+
+            if (applyCannyTransform || applyHoughTransform)
+            {
+                cvtColor(frame_l, gray_l, COLOR_BGR2GRAY);
+                cvtColor(frame_r, gray_r, COLOR_BGR2GRAY);
+
+                Canny(gray_l, canny_frame_l, 50, 200, 3);
+                Canny(gray_r, canny_frame_r, 50, 200, 3);
+
+                if (applyHoughTransform)
                 {
-                    HoughLinesP(canny_frame_l, lines_l, 1, CV_PI/180, 50, 50, 10);
-                    HoughLinesP(canny_frame_r, lines_r, 1, CV_PI/180, 50, 50, 10);
+                    lines_l.clear();
+                    lines_r.clear();
 
-                    for( size_t i = 0; i < lines_l.size(); i++ )
+                    HoughLinesP(canny_frame_l, lines_l, 1, CV_PI / 180, 50, 50, 10);
+                    HoughLinesP(canny_frame_r, lines_r, 1, CV_PI / 180, 50, 50, 10);
+
+                    for (size_t i = 0; i < lines_l.size(); i++)
                     {
-                      Vec4i l = lines_l[i];
-                      line(mat_frame_l, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0,0,255), 3, CV_AA);
+                        Vec4i l = lines_l[i];
+                        line(display_l, Point(l[0], l[1]), Point(l[2], l[3]),
+                             Scalar(0, 0, 255), 3, LINE_AA);
                     }
 
-                    for( size_t i = 0; i < lines_r.size(); i++ )
+                    for (size_t i = 0; i < lines_r.size(); i++)
                     {
-                      Vec4i l = lines_r[i];
-                      line(mat_frame_r, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0,0,255), 3, CV_AA);
+                        Vec4i l = lines_r[i];
+                        line(display_r, Point(l[0], l[1]), Point(l[2], l[3]),
+                             Scalar(0, 0, 255), 3, LINE_AA);
                     }
                 }
+            }
+            else if (computeDisparity)
+            {
+                Mat left_gray, right_gray;
+                cvtColor(frame_l, left_gray, COLOR_BGR2GRAY);
+                cvtColor(frame_r, right_gray, COLOR_BGR2GRAY);
 
-            }
-            else if(computeDisparity)
-            {
-                //Mat mat_frame_l(frame_l);
-                //Mat mat_frame_r(frame_r);
-                Mat mat_frame_l(cvarrToMat(frame_l));
-                Mat mat_frame_r(cvarrToMat(frame_r));
-                myStereoVar(Mat(frame_l, 0), Mat(frame_r, 0), disp);
-            }
- 
-            if(!frame_l) break;
-            else
-            {
-                clock_gettime(CLOCK_REALTIME, &frame_time_l);
-                curr_frame_time_l=((double)frame_time_l.tv_sec * 1000.0) + 
-                                  ((double)((double)frame_time_l.tv_nsec / 1000000.0));
-            }
-            if(!frame_r) break;
-            else
-            {
-                clock_gettime(CLOCK_REALTIME, &frame_time_r);
-                curr_frame_time_r=((double)frame_time_r.tv_sec * 1000.0) + 
-                                  ((double)((double)frame_time_r.tv_nsec / 1000000.0));
+                stereo->compute(left_gray, right_gray, disp);
+                disp.convertTo(disp8, CV_8U, 255.0 / (numDisparities * 16.0));
             }
 
-            if(applyCannyTransform)
-            {
-                 
-                IplImage canny_img_l  = canny_frame_l.operator IplImage();
-                IplImage canny_img_r  = canny_frame_r.operator IplImage();
+            curr_frame_time_l = now_ms(frame_time_l);
+            curr_frame_time_r = now_ms(frame_time_r);
 
-                cvShowImage("Capture LEFT", &canny_img_l);
-                cvShowImage("Capture RIGHT", &canny_img_r);
+            if (applyCannyTransform)
+            {
+                imshow("Capture LEFT", canny_frame_l);
+                imshow("Capture RIGHT", canny_frame_r);
             }
             else
             {
-                cvShowImage("Capture LEFT", frame_l);
-                cvShowImage("Capture RIGHT", frame_r);
+                imshow("Capture LEFT", display_l);
+                imshow("Capture RIGHT", display_r);
             }
 
-            if(computeDisparity)
-                imshow("Capture DISPARITY", disp);
+            if (computeDisparity)
+                imshow("Capture DISPARITY", disp8);
 
-            printf("LEFT dt=%5.2lf msec, RIGHT dt=%5.2lf msec\n", 
+            printf("LEFT dt=%5.2lf msec, RIGHT dt=%5.2lf msec\n",
                    (curr_frame_time_l - prev_frame_time_l),
                    (curr_frame_time_r - prev_frame_time_r));
 
-
-            // Set to pace frame display and capture rate
-            char c = cvWaitKey(10);
-            if(c == ESC_KEY)
+            char c = (char)(waitKey(10) & 0xFF);
+            if (c == ESC_KEY)
             {
-                sprintf(&snapshotname[9], "left_%8.4lf.jpg", curr_frame_time_l);
-                cvSaveImage(snapshotname, frame_l);
-                sprintf(&snapshotname[9], "right_%8.4lf.jpg", curr_frame_time_r);
-                cvSaveImage(snapshotname, frame_r);
+                string left_name = makeSnapshotName("left", curr_frame_time_l);
+                string right_name = makeSnapshotName("right", curr_frame_time_r);
+                imwrite(left_name, frame_l);
+                imwrite(right_name, frame_r);
+                printf("Saved %s and %s\n", left_name.c_str(), right_name.c_str());
             }
-            else if((c == 'q') || (c == 'Q'))
+            else if ((c == 'q') || (c == 'Q'))
             {
                 printf("Exiting ...\n");
-                cvReleaseCapture(&capture_l);
-                cvReleaseCapture(&capture_r);
-                exit(0);
+                capture_l.release();
+                capture_r.release();
+                destroyWindow("Capture LEFT");
+                destroyWindow("Capture RIGHT");
+                if (computeDisparity) destroyWindow("Capture DISPARITY");
+                return 0;
             }
 
-
-            prev_frame_time_l=curr_frame_time_l;
-            prev_frame_time_r=curr_frame_time_r;
+            prev_frame_time_l = curr_frame_time_l;
+            prev_frame_time_r = curr_frame_time_r;
         }
 
-        cvReleaseCapture(&capture_l);
-        cvReleaseCapture(&capture_r);
-        cvDestroyWindow("Capture LEFT");
-        cvDestroyWindow("Capture RIGHT");
+        capture_l.release();
+        capture_r.release();
+        destroyWindow("Capture LEFT");
+        destroyWindow("Capture RIGHT");
+        if (computeDisparity) destroyWindow("Capture DISPARITY");
     }
-
     else
     {
         // used to compute running averages for single camera frame rates
-        double ave_framedt=0.0, ave_frame_rate=0.0, fc=0.0, framedt=0.0;
-        unsigned int frame_count=0;
+        double ave_framedt = 0.0, ave_frame_rate = 0.0, fc = 0.0, framedt = 0.0;
+        unsigned int frame_count = 0;
 
-        cvNamedWindow("Capture Example", CV_WINDOW_AUTOSIZE);
-
-        while(1)
+        if (!capture.isOpened())
         {
-            //if(cvGrabFrame(capture)) frame=cvRetrieveFrame(capture);
-            frame=cvQueryFrame(capture); // short for grab and retrieve
-     
-            if(!frame) break;
+            cerr << "ERROR: Could not open single camera device " << dev << endl;
+            return -1;
+        }
 
+        namedWindow("Capture Example", WINDOW_AUTOSIZE);
+
+        while (1)
+        {
+            if (!capture.read(frame))
+                break;
+
+            if (frame.empty())
+                break;
             else
             {
-                clock_gettime(CLOCK_REALTIME, &frame_time);
-                curr_frame_time=((double)frame_time.tv_sec * 1000.0) + 
-                                ((double)((double)frame_time.tv_nsec / 1000000.0));
+                curr_frame_time = now_ms(frame_time);
                 frame_count++;
 
-                if(frame_count > 2)
+                if (frame_count > 2)
                 {
-                    fc=(double)frame_count;
-                    ave_framedt=((fc-1.0)*ave_framedt + framedt)/fc;
-                    ave_frame_rate=1.0/(ave_framedt/1000.0);
+                    fc = (double)frame_count;
+                    ave_framedt = ((fc - 1.0) * ave_framedt + framedt) / fc;
+                    if (ave_framedt > 0.0)
+                        ave_frame_rate = 1.0 / (ave_framedt / 1000.0);
                 }
             }
 
-            cvShowImage("Capture Example", frame);
-            printf("Frame @ %u sec, %lu nsec, dt=%5.2lf msec, avedt=%5.2lf msec, rate=%5.2lf fps\n", 
-                   (unsigned)frame_time.tv_sec, 
+            imshow("Capture Example", frame);
+            printf("Frame @ %u sec, %lu nsec, dt=%5.2lf msec, avedt=%5.2lf msec, rate=%5.2lf fps\n",
+                   (unsigned)frame_time.tv_sec,
                    (unsigned long)frame_time.tv_nsec,
                    framedt, ave_framedt, ave_frame_rate);
 
-            // Set to pace frame capture and display rate
-            char c = cvWaitKey(10);
-            if(c == ESC_KEY)
+            char c = (char)(waitKey(10) & 0xFF);
+            if (c == ESC_KEY)
             {
-                sprintf(&snapshotname[9], "%8.4lf.jpg", curr_frame_time);
-                cvSaveImage(snapshotname, frame);
+                string name = makeSnapshotName("single", curr_frame_time);
+                imwrite(name, frame);
+                printf("Saved %s\n", name.c_str());
             }
-            else if((c == 'q') || (c == 'Q'))
+            else if ((c == 'q') || (c == 'Q'))
             {
                 printf("Exiting ...\n");
-                cvReleaseCapture(&capture);
-                exit(0);
+                capture.release();
+                destroyWindow("Capture Example");
+                return 0;
             }
 
-            framedt=curr_frame_time - prev_frame_time;
-            prev_frame_time=curr_frame_time;
+            framedt = curr_frame_time - prev_frame_time;
+            prev_frame_time = curr_frame_time;
         }
 
-        cvReleaseCapture(&capture);
-        cvDestroyWindow("Capture Example");
+        capture.release();
+        destroyWindow("Capture Example");
     }
- 
-};
+
+    return 0;
+}

@@ -9,41 +9,46 @@
 #include <iostream>
 
 #include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/highgui.hpp>
 
 using namespace cv;
 using namespace std;
 
+#define HRES 640
+#define VRES 480
+
 
 int main( int argc, char** argv )
 {
-    cvNamedWindow("Capture Example", CV_WINDOW_AUTOSIZE);
-    //CvCapture* capture;
-    CvCapture* capture = cvCreateCameraCapture(1);
-    IplImage* frame;
-    int dev=1;
+    namedWindow("Capture Example", WINDOW_AUTOSIZE);
+    VideoCapture capture(0);
+    Mat frame;
+    int dev=0;
+
+    capture.set(CAP_PROP_FRAME_WIDTH, HRES);
+    capture.set(CAP_PROP_FRAME_HEIGHT, VRES);
 
     if(argc > 1)
     {
         printf("argv[1]=%s\n", argv[1]);
         sscanf(argv[1], "%d", &dev);
         printf("Will open video device %d\n", dev);
-        capture = cvCreateCameraCapture(dev);
+        VideoCapture capture(dev);
     }
 
     while(1)
     {
-        frame=cvQueryFrame(capture);
+        capture.read(frame);
      
-        if(!frame) break;
+        //if(!frame) break;
 
-        cvShowImage("Capture Example", frame);
+        imshow("Capture Example", frame);
 
-        char c = cvWaitKey(33);
+        char c = waitKey(33);
         if( c == 'q' ) break;
     }
 
-    cvReleaseCapture(&capture);
-    cvDestroyWindow("Capture Example");
+    capture.release();
+    destroyWindow("Capture Example");
     
 };
