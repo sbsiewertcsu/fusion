@@ -7,25 +7,22 @@ CFLAGS= -O0 -g $(INCLUDE_DIRS) $(CDEFS)
 LIBS= -L/usr/lib -lopencv_core -lopencv_flann -lopencv_video -lrt
 
 HFILES= 
-CFILES= capture.cpp rgb2cam.cpp
+CFILES= record.c play.c
 
 SRCS= ${HFILES} ${CFILES}
 OBJS= ${CFILES:.cpp=.o}
 
-all:	capture rgb2cam
+all:	record play
 
 clean:
 	-rm -f *.o *.d
-	-rm -f capture rgb2cam
+	-rm -f record play
+
+play: play.o
+	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o -lasound
 
 record: record.o
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o -lasound
-
-capture: capture.o
-	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
-
-rgb2cam: rgb2cam.o
-	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o `pkg-config --libs opencv4` $(LIBS)
 
 depend:
 

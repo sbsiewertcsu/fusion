@@ -11,6 +11,7 @@ import sounddevice as sd
 from scipy.io import wavfile
 
 sample_rate, audio = wavfile.read("gunshot-with-background.wav")
+#sample_rate, audio = wavfile.read("recorded.wav")
 
 print("sample rate:", sample_rate)
 print("shape:", audio.shape)

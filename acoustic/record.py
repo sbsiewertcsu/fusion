@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # record_usb_default.py
 #
+# pip install pyalsaaudio
+#
 # Usage:
-#   python3 record_usb_default.py
-#   python3 record_usb_default.py plughw:1,0
-#   python3 record_usb_default.py plughw:1,0 myfile.wav
+#   python3 record.py
+#   python3 record.py plughw:0,0
+#   python3 record.py plughw:0,0 myfile.wav
 #
 # Behavior:
 # - No args: auto-detect first USB capture device, output to recorded.wav
@@ -13,7 +15,6 @@
 #
 # Stop recording with Ctrl+C.
 
-import os
 import re
 import sys
 import wave
@@ -80,16 +81,15 @@ def find_first_usb_capture_device():
 
 
 def open_pcm(device):
-    pcm = alsaaudio.PCM(
+    return alsaaudio.PCM(
         type=alsaaudio.PCM_CAPTURE,
         mode=alsaaudio.PCM_NORMAL,
-        device=device
+        device=device,
+        channels=CHANNELS,
+        rate=SAMPLE_RATE,
+        format=FORMAT,
+        periodsize=PERIOD_SIZE,
     )
-    pcm.setchannels(CHANNELS)
-    pcm.setrate(SAMPLE_RATE)
-    pcm.setformat(FORMAT)
-    pcm.setperiodsize(PERIOD_SIZE)
-    return pcm
 
 
 def main():
@@ -101,7 +101,7 @@ def main():
         device = find_first_usb_capture_device()
         if not device:
             print("Could not find a USB capture device.", file=sys.stderr)
-            print("Try specifying one manually, e.g. python3 record_usb_default.py plughw:1,0", file=sys.stderr)
+            print("Try specifying one manually, e.g. python3 record_usb_default.py plughw:0,0", file=sys.stderr)
             sys.exit(1)
 
     outfile = sys.argv[2] if len(sys.argv) >= 3 else DEFAULT_OUTPUT
