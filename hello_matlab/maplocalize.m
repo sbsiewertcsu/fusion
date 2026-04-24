@@ -9,6 +9,8 @@
 %
 % Change line with “plot_poly” to h = plot_poly(corners, 'animate', 'axis', opt.axis, args{:});
 %
+% h = plot_poly(corners, 'animate', args{:});
+%
 % clear functions
 % clear classes
 % rehash toolboxcache
@@ -34,7 +36,9 @@ ekf.plot_xy('r')
 P700 = ekf.history(700).P
 sqrt(P700(1,1))
 ekf.plot_ellipse('g')
-ekf.plot_P();
+
+%%%%%%%%%%%%%%%%%%%%%% Figure 6.5
+%%% ekf.plot_P();
 
 
 %%%%%%%%%%%%%%%%%%%%%%%% Map landmark demo
@@ -47,7 +51,7 @@ sensor=RangeBearingSensor(veh, map, 'covar', W)
 
 
 %%%%%%%%%%%%%% Generates Fig 6.7a
-map=Landmark(20);
+map=LandmarkMap(20);
 veh = Bicycle('covar', V);
 veh.add_driver(RandomPath(map.dim));
 sensor=RangeBearingSensor(veh, map, 'covar', W, 'angle', [-pi/2 pi/2], 'range', 4, 'animate');
