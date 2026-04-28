@@ -1,37 +1,3 @@
-// Generated with ChatGPT 5.x Thinking and updated
-//
-// best: the currently selected best cross-camera match
-//
-// comp: compatibility - similar radius, similar relative images position, similar confidence
-//
-// For the Dempster-Shafer outputs:
-//
-// obj: belief mass for object present
-//      here it means belief that this matched pair corresponds to the target object
-//      higher obj = stronger support that the object is really there
-//
-// no: belief mass for no object
-//     evidence against the object hypothesis
-//     higher no = stronger support that this is not a valid object match
-//
-// unk: belief mass for unknown / uncertainty
-//      neither strong yes nor strong no
-//      this grows when the detector is unsure, weak, or conflicting
-//
-//
-// comp = “do these two detections line up?”
-// best = “which pair won?”
-//
-// obj = “how much do I believe the object is there?”
-// no = “how much do I believe it is not there?”
-// unk = “how unsure am I?”
-//
-// argument 1: first camera device
-// argument 2: second camera device
-// argument 3: number of extra candidate circles to show per camera
-//
-//
-//
 #include <opencv2/opencv.hpp>
 #include <algorithm>
 #include <cmath>
@@ -40,7 +6,10 @@
 #include <string>
 #include <vector>
 
-struct MassFunction {
+// Updated to use a simple belief-network style scorer instead of Dempster-Shafer.
+// Display and annotations are intentionally kept the same.
+
+struct BeliefState {
     double object;
     double noObject;
     double unknown;
@@ -65,45 +34,11 @@ struct BestPairResult {
     int idx1 = -1;
     int idx2 = -1;
     double compatibility = 0.0;
-    MassFunction fused{0.0, 0.0, 1.0};
+    BeliefState fused{0.0, 0.0, 1.0};
 };
 
 static double clamp01(double v) {
     return std::max(0.0, std::min(1.0, v));
-}
-
-static MassFunction makeMass(double confidence, double uncertainty = 0.25) {
-    confidence = clamp01(confidence);
-    uncertainty = clamp01(uncertainty);
-
-    double remaining = 1.0 - uncertainty;
-    return {
-        confidence * remaining,
-        (1.0 - confidence) * remaining,
-        uncertainty
-    };
-}
-
-static MassFunction combineDempster(const MassFunction& a, const MassFunction& b) {
-    double K = a.object * b.noObject + a.noObject * b.object;
-    if (K >= 0.999999) {
-        return {0.0, 0.0, 1.0};
-    }
-
-    double norm = 1.0 / (1.0 - K);
-    MassFunction out;
-    out.object = norm * (
-        a.object * b.object +
-        a.object * b.unknown +
-        a.unknown * b.object
-    );
-    out.noObject = norm * (
-        a.noObject * b.noObject +
-        a.noObject * b.unknown +
-        a.unknown * b.noObject
-    );
-    out.unknown = norm * (a.unknown * b.unknown);
-    return out;
 }
 
 static cv::Rect clampRect(const cv::Rect& r, const cv::Size& bounds) {
@@ -139,7 +74,7 @@ static double scoreCircleEdge(const cv::Mat& gray, const cv::Point2f& center, fl
     cv::Mat edges;
     cv::Canny(gray, edges, 80, 160);
 
-    int samples = 48;
+    const int samples = 48;
     int hits = 0;
     for (int i = 0; i < samples; ++i) {
         double theta = 2.0 * CV_PI * static_cast<double>(i) / static_cast<double>(samples);
@@ -271,6 +206,45 @@ static double pairCompatibility(const CircleCandidate& a,
     );
 }
 
+static BeliefState inferBeliefNetwork(const CircleCandidate& a,
+                                      const CircleCandidate& b,
+                                      double compatibility) {
+    // Simple belief-network style fusion:
+    // Match depends on confidence from each camera and pair compatibility.
+    double conf1 = clamp01(a.confidence);
+    double conf2 = clamp01(b.confidence);
+    double comp = clamp01(compatibility);
+
+    // Strong object support requires both cameras and a compatible pair.
+    double objectSupport = clamp01((0.45 * conf1 + 0.45 * conf2 + 0.10 * std::sqrt(conf1 * conf2)) * comp);
+
+    // No-object support rises when both cameras are weak and/or pair agreement is poor.
+    double noSupport = clamp01(
+        0.35 * (1.0 - conf1) +
+        0.35 * (1.0 - conf2) +
+        0.30 * (1.0 - comp)
+    );
+
+    // Unknown rises when evidence is weak, mismatched, or compatibility is mediocre.
+    double unknownBase = clamp01(
+        0.45 * (1.0 - std::max(conf1, conf2)) +
+        0.35 * std::abs(conf1 - conf2) +
+        0.20 * (1.0 - comp)
+    );
+
+    // Normalize all three into a proper belief triple.
+    double sum = objectSupport + noSupport + unknownBase;
+    if (sum <= 1e-9) {
+        return {0.0, 0.0, 1.0};
+    }
+
+    BeliefState out;
+    out.object = objectSupport / sum;
+    out.noObject = noSupport / sum;
+    out.unknown = unknownBase / sum;
+    return out;
+}
+
 static BestPairResult findBestPair(const std::vector<CircleCandidate>& cam1,
                                    const std::vector<CircleCandidate>& cam2,
                                    const cv::Size& size1,
@@ -281,13 +255,7 @@ static BestPairResult findBestPair(const std::vector<CircleCandidate>& cam1,
     for (int i = 0; i < static_cast<int>(cam1.size()); ++i) {
         for (int j = 0; j < static_cast<int>(cam2.size()); ++j) {
             double compatibility = pairCompatibility(cam1[i], cam2[j], size1, size2);
-
-            double conf1 = cam1[i].confidence * compatibility;
-            double conf2 = cam2[j].confidence * compatibility;
-
-            MassFunction m1 = makeMass(conf1, 0.25);
-            MassFunction m2 = makeMass(conf2, 0.25);
-            MassFunction fused = combineDempster(m1, m2);
+            BeliefState fused = inferBeliefNetwork(cam1[i], cam2[j], compatibility);
 
             double score = fused.object - 0.25 * fused.unknown;
             if (score > bestScore) {
@@ -403,7 +371,7 @@ int main(int argc, char** argv) {
 
         std::string summary;
         if (best.found) {
-            summary = "Dempster-Shafer Best pair: cam1 #" + std::to_string(best.idx1) +
+            summary = "Belief Net Best pair: cam1 #" + std::to_string(best.idx1) +
                       " <-> cam2 #" + std::to_string(best.idx2) +
                       "  comp=" + cv::format("%.2f", best.compatibility) +
                       "  obj=" + cv::format("%.2f", best.fused.object) +
@@ -416,7 +384,7 @@ int main(int argc, char** argv) {
         cv::putText(combined, summary, cv::Point(20, combined.rows - 20),
                     cv::FONT_HERSHEY_SIMPLEX, 0.65, cv::Scalar(0, 255, 255), 2);
 
-        cv::imshow("Green Hough Pair Dempster-Shafer", combined);
+        cv::imshow("Green Hough Pair Belief Network", combined);
 
         int key = cv::waitKey(1);
         if (key == 27) {
