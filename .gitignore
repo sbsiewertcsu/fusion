@@ -3,4 +3,5 @@
 # Ignore temp compilation files
 *.o
 *.d
+*.x
 
