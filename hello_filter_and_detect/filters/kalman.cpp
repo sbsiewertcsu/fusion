@@ -131,9 +131,14 @@ int main()
     // OpenCV Kalman Filter Class instance
     KalmanFilter kf;
 
+    // Object position vars
     double trueAngle = 0.0;
     double measuredAngle = 0.0;
     double trackedAngle = 0.0;
+
+    // Tracking accuracy
+    size_t correctlyTrackedCount = 0;
+    size_t totalFramesOcurred = 0;
 
     resetKalman(kf, trueAngle, currentAngularVelocityRadPerSec());
 
@@ -146,6 +151,7 @@ int main()
         auto now = std::chrono::steady_clock::now();
         double dt = std::chrono::duration<double>(now - lastTime).count();
         lastTime = now;
+        totalFramesOcurred++;
 
         if (dt <= 0.0)
             dt = 1.0 / 60.0;
@@ -215,12 +221,20 @@ int main()
                       static_cast<int>(trackedPt.y) - boxHalfSize,
                       boxHalfSize * 2,
                       boxHalfSize * 2);
-        rectangle(img, trackBox, Scalar(0, 255, 0), 2, LINE_AA);
+        
+        // Determine good vs bad tracking state
+        bool ptIsTracked = trackBox.contains(truePt);
+        // Increment correctness counter
+        if (ptIsTracked) { correctlyTrackedCount++; }
+        // Color box red if badly tracked, else green
+        Scalar trackBoxColor = ptIsTracked ? Scalar(0, 255, 0) : Scalar(0, 0, 255);
+
+        rectangle(img, trackBox, trackBoxColor, 2, LINE_AA);
         circle(img, truePt, 6, Scalar(0, 0, 255), FILLED, LINE_AA);
 
         putText(img, "Red point: true location", Point(20, 30), FONT_HERSHEY_SIMPLEX,
                 0.65, Scalar(220, 220, 220), 2, LINE_AA);
-        putText(img, "Green box: tracked location", Point(20, 58), FONT_HERSHEY_SIMPLEX,
+        putText(img, "Box: tracked location", Point(20, 58), FONT_HERSHEY_SIMPLEX,
                 0.65, Scalar(220, 220, 220), 2, LINE_AA);
 
         char speedText[128];
@@ -231,6 +245,12 @@ int main()
         char noiseText[128];
         std::snprintf(noiseText, sizeof(noiseText), "Noise: %d deg", g_noiseSlider);
         putText(img, noiseText, Point(20, 116), FONT_HERSHEY_SIMPLEX,
+                0.65, Scalar(255, 255, 255), 2, LINE_AA);
+
+        char accuracyText[128];
+        float trackerPercentAccuracy = 100.0f * (float)correctlyTrackedCount/(float)totalFramesOcurred;
+        std::snprintf(accuracyText, sizeof(accuracyText), "Accuracy: %.0f%%", trackerPercentAccuracy);
+        putText(img, accuracyText, Point(20, 144), FONT_HERSHEY_SIMPLEX,
                 0.65, Scalar(255, 255, 255), 2, LINE_AA);
 
         drawButton(img);
@@ -247,6 +267,8 @@ int main()
             trueAngle = 0.0;
             measuredAngle = 0.0;
             trackedAngle = 0.0;
+            correctlyTrackedCount = 0;
+            totalFramesOcurred = 0;
             resetKalman(kf, trueAngle, currentAngularVelocityRadPerSec());
         }
     }
